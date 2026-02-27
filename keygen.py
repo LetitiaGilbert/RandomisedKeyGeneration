@@ -2,6 +2,9 @@ import secrets
 import os
 import hashlib
 import time
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import base64
 
@@ -29,17 +32,27 @@ def generate_secure_key():
     secret_entropy = secrets.token_bytes(KEY_SIZE)
     print("    Secrets entropy (hex):", secret_entropy.hex())
 
-    # Step 1d) Combine and hash all entropy
-    print("\nStep 1d) Combine all entropy and hash with SHA-512...")
-    combined = system_entropy + secret_entropy + timing_entropy
-    print("    Combined entropy (hex, truncated):", combined.hex()[:64] + "...")
-    hashed = hashlib.sha512(combined).digest()
-    print("    SHA-512 hash (hex):", hashed.hex())
+    print("\nStep 1d) Using HKDF for structured key derivation...")
 
-    # Step 1e) Truncate to 256 bits for AES key
-    key = hashed[:KEY_SIZE]
-    print("\nStep 1e) Final AES-256 key (hex):", key.hex())
-    print("          Final AES-256 key (Base64):", base64.b64encode(key).decode())
+    # Combine as input keying material (IKM)
+    ikm = system_entropy + secret_entropy + timing_entropy
+    print("    Combined IKM (hex):", ikm.hex())
+
+    # Optional salt (adds randomness + protects against precomputation)
+    salt = os.urandom(16)
+    print("    Salt (hex):", salt.hex())
+    hkdf = HKDF(
+        algorithm=hashes.SHA512(),
+        length=KEY_SIZE,
+        salt=salt,
+        info=b"AES-256-GCM key derivation",
+        backend=default_backend()
+    )
+
+    key = hkdf.derive(ikm)
+
+    print("    Final AES-256 key (hex):", key.hex())
+    print("    Final AES-256 key (Base64):", base64.b64encode(key).decode())
     return key
 
 def main():
@@ -71,7 +84,6 @@ def main():
     decrypted = aesgcm.decrypt(nonce, ciphertext, None)
     print("\nStep 5) Decrypt ciphertext -> Plaintext")
     print("    Decrypted text:", decrypted.decode())
-    
 
     # Step 7: Verify integrity
     print("\nStep 6) Integrity check passed:", decrypted == plaintext)
