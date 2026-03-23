@@ -55,6 +55,23 @@ def generate_secure_key():
     print("    Final AES-256 key (Base64):", base64.b64encode(key).decode())
     return key
 
+def generate_test_key():
+    system_entropy = os.urandom(KEY_SIZE)
+    secret_entropy = secrets.token_bytes(KEY_SIZE)
+    timing_entropy = secrets.token_bytes(8)
+
+    ikm = system_entropy + secret_entropy + timing_entropy
+
+    hkdf = HKDF(
+        algorithm=hashes.SHA512(),
+        length=KEY_SIZE,
+        salt=os.urandom(16),
+        info=b"AES-256-GCM key derivation",
+        backend=default_backend()
+    )
+
+    return hkdf.derive(ikm)
+
 def main():
     print("\n--- AES-256-GCM Key Generation ---\n")
 
