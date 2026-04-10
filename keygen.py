@@ -2,6 +2,8 @@ import secrets
 import os
 import hashlib
 import time
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
@@ -11,6 +13,15 @@ import base64
 # Constants
 KEY_SIZE = 32      # 256 bits
 NONCE_SIZE = 12    # 96 bits for GCM
+
+def generate_dh_keys():
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+    return private_key, public_key
+
+def compute_shared_secret(private_key, peer_public_key):
+    shared_secret = private_key.exchange(ec.ECDH(), peer_public_key)
+    return shared_secret
 
 def user_entropy():
     print("\nStep 1a) Collect user entropy:")
@@ -22,7 +33,7 @@ def user_entropy():
     print(f"    Timing interval (ns): {interval_ns}")
     return interval_ns.to_bytes(8, 'big')   # 8 bytes
 
-def generate_secure_key():
+def generate_secure_key(shared_secret):
     timing_entropy = user_entropy()
     print("\nStep 1b) Collect system entropy:")
     system_entropy = os.urandom(KEY_SIZE)
@@ -35,7 +46,7 @@ def generate_secure_key():
     print("\nStep 1d) Using HKDF for structured key derivation...")
 
     # Combine as input keying material (IKM)
-    ikm = system_entropy + secret_entropy + timing_entropy
+    ikm = shared_secret + system_entropy + secret_entropy + timing_entropy
     print("    Combined IKM (hex):", ikm.hex())
 
     # Optional salt (adds randomness + protects against precomputation)
@@ -73,37 +84,71 @@ def generate_test_key():
     return hkdf.derive(ikm)
 
 def main():
-    print("\n--- AES-256-GCM Key Generation ---\n")
+    # Step 1: Diffie-Hellman Key Exchange
 
-    # Generate the AES key
-    key = generate_secure_key()
+    print("\n--- Diffie-Hellman Key Exchange with entropy based key derivation ---\n")
 
-    # Step 2: Define plaintext
-    plaintext = input("\nStep 2) Enter text to encrypt: ").encode()
-    print("    Plaintext (bytes):", plaintext)
+    # Alice generates keys
+    alice_private, alice_public = generate_dh_keys()
+    print("Alice's public key (hex):", alice_public.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode())
+    print("\n")
+    print("Alice's public key (Base64):", base64.b64encode(alice_public.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode().encode()).decode())
+    print("\n")
+
+
+    # Bob generates keys
+    bob_private, bob_public = generate_dh_keys()
+    print("Bob's public key (hex):", bob_public.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode())
+    print("\n")
+    print("Bob's public key (Base64):", base64.b64encode(bob_public.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode().encode()).decode())
+    print("\n")
+
+
+    # Exchange public keys and compute shared secret
+    alice_shared = compute_shared_secret(alice_private, bob_public)
+    print("Alice's computed shared secret (hex):", alice_shared.hex())
+    print("\n")
+    bob_shared = compute_shared_secret(bob_private, alice_public)
+    print("Bob's computed shared secret (hex):", bob_shared.hex())
+    print("\n")
+
+    print("Shared secrets match:", alice_shared == bob_shared)
+
+    # Step 2: Generate AES key (use shared secret)
+    key = generate_secure_key(alice_shared)
 
     # Step 3: Create AES-GCM cipher
     aesgcm = AESGCM(key)
 
-    # Step 4: Generate random nonce
-    print("\nStep 3) Generate random nonce (12 bytes for GCM)...")
+    # Step 4: Input plaintext
+    plaintext = input("\nEnter text to encrypt: ").encode()
+
+    # Step 5: Generate nonce
     nonce = secrets.token_bytes(NONCE_SIZE)
-    print("    Nonce (hex):", nonce.hex())
-    print("    Nonce (Base64):", base64.b64encode(nonce).decode())
 
-    # Step 5: Encrypt
+    # Step 6: Encrypt
     ciphertext = aesgcm.encrypt(nonce, plaintext, None)
-    print("\nStep 4) Encrypt plaintext -> Ciphertext")
-    print("    Ciphertext (hex):", ciphertext.hex())
-    print("    Ciphertext (Base64):", base64.b64encode(ciphertext).decode())
+    print("\nNonce (hex):", nonce.hex())
 
-    # Step 6: Decrypt
+    print("\nCiphertext:", base64.b64encode(ciphertext).decode())
+
+    # Step 7: Decrypt (same key)
     decrypted = aesgcm.decrypt(nonce, ciphertext, None)
-    print("\nStep 5) Decrypt ciphertext -> Plaintext")
-    print("    Decrypted text:", decrypted.decode())
 
-    # Step 7: Verify integrity
-    print("\nStep 6) Integrity check passed:", decrypted == plaintext)
+    print("Decrypted:", decrypted.decode())
+    print("Integrity check:", decrypted == plaintext)
 
 if __name__ == "__main__":
     main()

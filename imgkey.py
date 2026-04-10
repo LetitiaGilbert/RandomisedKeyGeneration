@@ -1,4 +1,5 @@
 import hashlib
+import os
 import secrets
 import cv2
 import numpy as np
@@ -7,6 +8,7 @@ from PIL import Image
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
+from keygen import KEY_SIZE
 
 
 AES_KEY_SIZE = 32  # 256-bit AES key
@@ -17,7 +19,7 @@ def generate_otp():
     return f"{secrets.randbelow(10**6):06d}"
 
 
-def extract_image_features(image_path, verbose=False):
+def extract_image_features(image_path, verbose=True):
     """Extract multiple image features and convert them to bytes"""
 
     # Read image using OpenCV
@@ -84,7 +86,7 @@ def extract_image_features(image_path, verbose=False):
     return hashlib.sha512(combined_features).digest()
 
 
-def derive_aes_key(image_path, otp, verbose=False):
+def derive_aes_key(image_path, otp, verbose=True):
     """Derive AES key from image features + OTP"""
 
     image_features = extract_image_features(image_path, verbose)
@@ -93,17 +95,23 @@ def derive_aes_key(image_path, otp, verbose=False):
 
     master_material = hashlib.sha512(combined).digest()
 
+    ikm = image_features + otp.encode()
+    print("    Combined IKM (hex):", ikm.hex())
+
+    # Optional salt (adds randomness + protects against precomputation)
+    salt = os.urandom(16)
+    print("    Salt (hex):", salt.hex())
     hkdf = HKDF(
-        algorithm=hashes.SHA256(),
-        length=AES_KEY_SIZE,
-        salt=None,
-        info=b"AES-256 image+otp key derivation",
+        algorithm=hashes.SHA512(),
+        length=KEY_SIZE,
+        salt=salt,
+        info=b"AES-256-GCM key derivation",
         backend=default_backend()
     )
 
-    aes_key = hkdf.derive(master_material)
+    key = hkdf.derive(ikm)
 
-    return aes_key
+    return key
 
 
 # Example Usage
