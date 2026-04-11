@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import os
 import secrets
@@ -6,13 +7,22 @@ import numpy as np
 from PIL import Image
 
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import ec
 from keygen import KEY_SIZE
 
 
 AES_KEY_SIZE = 32  # 256-bit AES key
 
+def generate_dh_keys():
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+    return private_key, public_key
+
+
+def compute_shared_secret(private_key, peer_public_key):
+    return private_key.exchange(ec.ECDH(), peer_public_key)
 
 def generate_otp():
     """Generate secure 6-digit OTP"""
@@ -86,7 +96,7 @@ def extract_image_features(image_path, verbose=True):
     return hashlib.sha512(combined_features).digest()
 
 
-def derive_aes_key(image_path, otp, verbose=True):
+def derive_aes_key(shared_secret, image_path, otp, verbose=True):
     """Derive AES key from image features + OTP"""
 
     image_features = extract_image_features(image_path, verbose)
@@ -95,11 +105,11 @@ def derive_aes_key(image_path, otp, verbose=True):
 
     master_material = hashlib.sha512(combined).digest()
 
-    ikm = image_features + otp.encode()
+    ikm = shared_secret + image_features + otp.encode()
     print("    Combined IKM (hex):", ikm.hex())
 
     # Optional salt (adds randomness + protects against precomputation)
-    salt = os.urandom(16)
+    salt = hashlib.sha256(shared_secret).digest()[:16]
     print("    Salt (hex):", salt.hex())
     hkdf = HKDF(
         algorithm=hashes.SHA512(),
@@ -118,10 +128,58 @@ def derive_aes_key(image_path, otp, verbose=True):
 if __name__ == "__main__":
 
     image_path = "apple.png"
-
     otp = generate_otp()
-    print("Generated OTP:", otp)
 
-    key = derive_aes_key(image_path, otp)
+    print("OTP:", otp)
 
-    print("Derived AES-256 Key:", key.hex())
+    # Alice
+    alice_priv, alice_pub = generate_dh_keys()
+    print("Alice's public key (hex):", alice_pub.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode())
+    print("\n")
+    print("Alice's public key (Base64):", base64.b64encode(alice_pub.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )).decode())
+    print("\n")
+
+    # Bob
+    bob_priv, bob_pub = generate_dh_keys()
+    print("Bob's public key (hex):", bob_pub.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode())
+    print("\n")
+    print("Bob's public key (Base64):", base64.b64encode(bob_pub.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )).decode())
+    print("\n")
+
+    # Shared secrets
+    alice_shared = compute_shared_secret(alice_priv, bob_pub)
+    print("Alice's shared secret (hex):",
+            alice_shared.hex())
+    print("\n")
+    print("Alice's shared secret (Base64):", base64.b64encode(alice_shared).decode())
+    print("\n")
+    bob_shared = compute_shared_secret(bob_priv, alice_pub)
+    print("Bob's shared secret (hex):", bob_shared.hex())
+    print("\n")
+    print("Bob's shared secret (Base64):", base64.b64encode(bob_shared).decode())
+    print("\n")
+
+    print("Shared secrets match:", alice_shared == bob_shared)
+
+    # Both derive SAME key
+    alice_key = derive_aes_key(alice_shared, image_path, otp)
+    print("Alice's derived AES key (hex):", alice_key.hex())
+    print("\n")
+    bob_key = derive_aes_key(bob_shared, image_path, otp)
+    print("Bob's derived AES key (hex):", bob_key.hex())
+    print("\n")
+
+    print("Keys match:", alice_key == bob_key)
+    print("Final Key:", alice_key.hex())

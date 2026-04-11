@@ -120,9 +120,11 @@ def main():
     alice_shared = compute_shared_secret(alice_private, bob_public)
     print("Alice's computed shared secret (hex):", alice_shared.hex())
     print("\n")
+    print("Alice's computed shared secret (Base64):", base64.b64encode(alice_shared).decode())
     bob_shared = compute_shared_secret(bob_private, alice_public)
     print("Bob's computed shared secret (hex):", bob_shared.hex())
     print("\n")
+    print("Bob's computed shared secret (Base64):", base64.b64encode(bob_shared).decode())
 
     print("Shared secrets match:", alice_shared == bob_shared)
 
